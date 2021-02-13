@@ -19,6 +19,7 @@ namespace lurien
 namespace internals
 {
   static std::atomic<bool> keep_sampling = true;
+  static std::unique_ptr<std::thread> sampling_worker;
 
   void take_samples();
 }
@@ -26,14 +27,21 @@ namespace internals
 // Kick off a thread which periodically samples all threads.
 void Init()
 {
-  std::thread sampler(&lurien::internals::take_samples);
-  sampler.detach();
+  if (!internals::sampling_worker)
+  {
+    internals::sampling_worker = std::make_unique<std::thread>(
+      &internals::take_samples);
+  }
 }
 
 // Stop sampling.
 void Stop()
 {
-  lurien::internals::keep_sampling = false;
+  if (internals::keep_sampling && internals::sampling_worker)
+  {
+    internals::keep_sampling = false;
+    internals::sampling_worker->join();
+  }
 }
 
 namespace internals
