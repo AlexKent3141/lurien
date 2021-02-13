@@ -94,7 +94,7 @@ public:
   
 private:
   std::size_t current_scope_hash_;
-  std::uint64_t samples_outside_scope_;
+  std::uint64_t total_samples_;
   std::hash<std::string> hash_fn_;
   std::unordered_map<std::size_t, ScopeInfo> scope_data_;
   std::mutex sample_sync_;
@@ -114,7 +114,7 @@ std::shared_ptr<ThreadSamplingData> CreateSamplingData()
 ThreadSamplingData::ThreadSamplingData()
 :
   current_scope_hash_(0),
-  samples_outside_scope_(0)
+  total_samples_(0)
 {
 }
 
@@ -124,7 +124,8 @@ ThreadSamplingData::~ThreadSamplingData()
 
   // TODO: This is where the data we've accumulated will be output.
   std::cout << "ThreadSamplingData d'tor" << std::endl;
-  std::cout << "Samples outside scope: " << samples_outside_scope_ << std::endl;
+  std::cout << "Total samples: " << total_samples_ << std::endl;
+
   for (const auto& pair : scope_data_)
   {
     const auto& scope_info = pair.second;
@@ -154,16 +155,14 @@ void ThreadSamplingData::Update(
 
 void ThreadSamplingData::TakeSample()
 {
-  if (current_scope_hash_ == 0)
-  {
-    ++samples_outside_scope_;
-  }
-  else
+  if (current_scope_hash_ != 0)
   {
     std::lock_guard<std::mutex> lk(sample_sync_);
     auto& scope_info = scope_data_.at(current_scope_hash_);
     ++scope_info.samples_;
   }
+
+  ++total_samples_;
 }
 
 // This object updates the thread local data when it is constructed and
