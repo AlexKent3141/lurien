@@ -16,10 +16,23 @@
 namespace lurien
 {
 
-namespace internals
+namespace details
 {
-  static std::atomic<bool> keep_sampling = true;
-  static std::unique_ptr<std::thread> sampling_worker;
+  class ThreadSamplingData;
+
+  static std::shared_ptr<ThreadSamplingData> CreateSamplingData();
+
+  // All variables which need to have external linkage are static members
+  // of this struct.
+  struct Ext
+  {
+    inline static std::atomic<bool> keep_sampling = true;
+    inline static std::unique_ptr<std::thread> sampling_worker;
+    inline static std::mutex sampler_sync;
+    inline static std::vector<std::weak_ptr<ThreadSamplingData>> samplers;
+    inline thread_local static std::shared_ptr<ThreadSamplingData> thread_data =
+      CreateSamplingData();
+  };
 
   void take_samples();
 }
@@ -27,24 +40,24 @@ namespace internals
 // Kick off a thread which periodically samples all threads.
 void Init()
 {
-  if (!internals::sampling_worker)
+  if (!details::Ext::sampling_worker)
   {
-    internals::sampling_worker = std::make_unique<std::thread>(
-      &internals::take_samples);
+    details::Ext::sampling_worker = std::make_unique<std::thread>(
+      &details::take_samples);
   }
 }
 
 // Stop sampling.
 void Stop()
 {
-  if (internals::keep_sampling && internals::sampling_worker)
+  if (details::Ext::keep_sampling && details::Ext::sampling_worker)
   {
-    internals::keep_sampling = false;
-    internals::sampling_worker->join();
+    details::Ext::keep_sampling = false;
+    details::Ext::sampling_worker->join();
   }
 }
 
-namespace internals
+namespace details
 {
 
 struct ScopeInfo
@@ -70,18 +83,10 @@ ScopeInfo::ScopeInfo(
 {
 }
 
-static std::mutex sampler_sync;
-
-class ThreadSamplingData;
-
-static std::vector<std::weak_ptr<ThreadSamplingData>> samplers;
-
 class ThreadSamplingData :
   public std::enable_shared_from_this<ThreadSamplingData>
 {
 public:
-  static std::shared_ptr<ThreadSamplingData> Create();
-
   ThreadSamplingData();
   ~ThreadSamplingData();
   void Update(const std::string& name);
@@ -95,12 +100,12 @@ private:
   std::mutex sample_sync_;
 };
 
-std::shared_ptr<ThreadSamplingData> ThreadSamplingData::Create()
+static std::shared_ptr<ThreadSamplingData> CreateSamplingData()
 {
   auto sampler = std::make_shared<ThreadSamplingData>();
   {
-    std::lock_guard<std::mutex> lk(sampler_sync);
-    samplers.push_back(sampler->weak_from_this());
+    std::lock_guard<std::mutex> lk(Ext::sampler_sync);
+    Ext::samplers.push_back(sampler->weak_from_this());
   }
 
   return sampler;
@@ -161,9 +166,6 @@ void ThreadSamplingData::TakeSample()
   }
 }
 
-thread_local static std::shared_ptr<ThreadSamplingData> thread_data =
-  ThreadSamplingData::Create();
-
 // This object updates the thread local data when it is constructed and
 // destructed.
 class Scope
@@ -181,20 +183,20 @@ Scope::Scope(
 :
   name_(name)
 {
-  thread_data->Update(name);
+  Ext::thread_data->Update(name);
 }
 
 Scope::~Scope()
 {
-  thread_data->Update(name_);
+  Ext::thread_data->Update(name_);
 }
 
 void take_samples()
 {
-  while (keep_sampling)
+  while (Ext::keep_sampling)
   {
-    std::lock_guard<std::mutex> lk(sampler_sync);
-    for (auto& sampler : samplers)
+    std::lock_guard<std::mutex> lk(Ext::sampler_sync);
+    for (auto& sampler : Ext::samplers)
     {
       auto shared_sampler = sampler.lock();
       if (shared_sampler)
@@ -205,7 +207,7 @@ void take_samples()
   }
 }
 
-} // internals
+} // details
 } // lurien
 
 #endif // __LURIEN_PROFILER_H__
