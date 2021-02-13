@@ -20,7 +20,7 @@ namespace details
 {
   class ThreadSamplingData;
 
-  static std::shared_ptr<ThreadSamplingData> CreateSamplingData();
+  std::shared_ptr<ThreadSamplingData> CreateSamplingData();
 
   // All variables which need to have external linkage are static members
   // of this struct.
@@ -34,7 +34,7 @@ namespace details
       CreateSamplingData();
   };
 
-  void take_samples();
+  void TakeSamples();
 }
 
 // Kick off a thread which periodically samples all threads.
@@ -43,7 +43,7 @@ void Init()
   if (!details::Ext::sampling_worker)
   {
     details::Ext::sampling_worker = std::make_unique<std::thread>(
-      &details::take_samples);
+      &details::TakeSamples);
   }
 }
 
@@ -100,7 +100,7 @@ private:
   std::mutex sample_sync_;
 };
 
-static std::shared_ptr<ThreadSamplingData> CreateSamplingData()
+std::shared_ptr<ThreadSamplingData> CreateSamplingData()
 {
   auto sampler = std::make_shared<ThreadSamplingData>();
   {
@@ -191,7 +191,7 @@ Scope::~Scope()
   Ext::thread_data->Update(name_);
 }
 
-void take_samples()
+void TakeSamples()
 {
   while (Ext::keep_sampling)
   {
