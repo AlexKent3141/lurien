@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -62,26 +63,10 @@ namespace details
 
 struct ScopeInfo
 {
-  ScopeInfo() = delete;
-
-  ScopeInfo(
-    const std::string& name,
-    std::size_t parent_hash);
-
   std::string name_;
   std::size_t parent_hash_;
   std::uint64_t samples_;
 };
-
-ScopeInfo::ScopeInfo(
-  const std::string& name,
-  std::size_t parent_hash)
-:
-  name_(name),
-  parent_hash_(parent_hash),
-  samples_(0)
-{
-}
 
 class ThreadSamplingData :
   public std::enable_shared_from_this<ThreadSamplingData>
@@ -118,22 +103,76 @@ ThreadSamplingData::ThreadSamplingData()
 {
 }
 
+struct ScopeOutput
+{
+  std::string name_;
+  double cpu_proportion_;
+  std::uint64_t samples_;
+  std::size_t hash_;
+  std::list<ScopeOutput> scope_outputs_;
+};
+
+struct ThreadOutput
+{
+  std::thread::id thread_id_;
+  std::list<ScopeOutput> scope_outputs_;
+};
+
+// This is where the data this thread has accumulated will be output.
 ThreadSamplingData::~ThreadSamplingData()
 {
   std::lock_guard<std::mutex> lk(sample_sync_);
 
-  // TODO: This is where the data we've accumulated will be output.
-  std::cout << "ThreadSamplingData d'tor" << std::endl;
-  std::cout << "Total samples: " << total_samples_ << std::endl;
+  ThreadOutput thread_output;
+  thread_output.thread_id_ = std::this_thread::get_id();
 
-  for (const auto& pair : scope_data_)
+  if (total_samples_ == 0)
   {
-    const auto& scope_info = pair.second;
-    std::cout << pair.first << " "
-              << scope_info.name_ << " "
-              << scope_info.parent_hash_ << " "
-              << scope_info.samples_ << std::endl;
+    // TODO: What should happen in this situation?
+    return;
   }
+
+  std::list<std::reference_wrapper<ScopeOutput>> leaves;
+
+  auto add_scopes_with_parent =
+    [this, &leaves] (
+      std::size_t parent_hash,
+      std::list<ScopeOutput>& child_scopes)
+  {
+    for (const auto& pair : scope_data_)
+    {
+      const ScopeInfo& scope_info = pair.second;
+      if (scope_info.parent_hash_ == parent_hash)
+      {
+        child_scopes.emplace_back(
+          ScopeOutput
+          {
+            scope_info.name_,
+            double(scope_info.samples_) / total_samples_,
+            scope_info.samples_,
+            pair.first
+          });
+
+        leaves.push_back(child_scopes.back());
+      }
+    }
+  };
+
+  add_scopes_with_parent(0, thread_output.scope_outputs_);
+
+  while (!leaves.empty())
+  {
+    ScopeOutput& leaf = leaves.front();
+    leaves.pop_front();
+    std::cout << leaf.name_ << " "
+              << leaf.hash_ << " "
+              << leaf.cpu_proportion_ << std::endl;
+
+    add_scopes_with_parent(leaf.hash_, leaf.scope_outputs_);
+  }
+
+  // TODO: accumulate the probabilities so that an outer scope's usage is at
+  // least the sum of its inner scope's usages.
 }
 
 void ThreadSamplingData::Update(
@@ -148,7 +187,7 @@ void ThreadSamplingData::Update(
     scope_data_.insert(
     {
       current_scope_hash_,
-      ScopeInfo(name, parent_hash)
+      ScopeInfo { name, parent_hash, 0 }
     });
   }
 }
