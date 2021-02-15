@@ -38,6 +38,21 @@ namespace details
   void TakeSamples();
 }
 
+struct ScopeOutput
+{
+  std::string name_;
+  std::uint64_t samples_;
+  std::size_t hash_;
+  double cpu_proportion_;
+  std::list<ScopeOutput> scope_outputs_;
+};
+
+struct ThreadOutput
+{
+  std::thread::id thread_id_;
+  std::list<ScopeOutput> scope_outputs_;
+};
+
 // Kick off a thread which periodically samples all threads.
 void Init()
 {
@@ -83,6 +98,9 @@ private:
   std::hash<std::string> hash_fn_;
   std::unordered_map<std::size_t, ScopeInfo> scope_data_;
   std::mutex sample_sync_;
+
+  std::uint64_t AccumulateStats(ScopeOutput&) const;
+  void AccumulateStats(ThreadOutput&) const;
 };
 
 std::shared_ptr<ThreadSamplingData> CreateSamplingData()
@@ -103,21 +121,6 @@ ThreadSamplingData::ThreadSamplingData()
 {
 }
 
-struct ScopeOutput
-{
-  std::string name_;
-  double cpu_proportion_;
-  std::uint64_t samples_;
-  std::size_t hash_;
-  std::list<ScopeOutput> scope_outputs_;
-};
-
-struct ThreadOutput
-{
-  std::thread::id thread_id_;
-  std::list<ScopeOutput> scope_outputs_;
-};
-
 // This is where the data this thread has accumulated will be output.
 ThreadSamplingData::~ThreadSamplingData()
 {
@@ -125,12 +128,6 @@ ThreadSamplingData::~ThreadSamplingData()
 
   ThreadOutput thread_output;
   thread_output.thread_id_ = std::this_thread::get_id();
-
-  if (total_samples_ == 0)
-  {
-    // TODO: What should happen in this situation?
-    return;
-  }
 
   std::list<std::reference_wrapper<ScopeOutput>> leaves;
 
@@ -148,7 +145,6 @@ ThreadSamplingData::~ThreadSamplingData()
           ScopeOutput
           {
             scope_info.name_,
-            double(scope_info.samples_) / total_samples_,
             scope_info.samples_,
             pair.first
           });
@@ -164,15 +160,31 @@ ThreadSamplingData::~ThreadSamplingData()
   {
     ScopeOutput& leaf = leaves.front();
     leaves.pop_front();
-    std::cout << leaf.name_ << " "
-              << leaf.hash_ << " "
-              << leaf.cpu_proportion_ << std::endl;
-
     add_scopes_with_parent(leaf.hash_, leaf.scope_outputs_);
   }
 
-  // TODO: accumulate the probabilities so that an outer scope's usage is at
+  // Accumulate the probabilities so that an outer scope's usage is at
   // least the sum of its inner scope's usages.
+  AccumulateStats(thread_output);
+
+  std::function<void(const ScopeOutput&)> print_subtree;
+  print_subtree = [&print_subtree] (const ScopeOutput& scope)
+  {
+    std::cout << scope.name_ << " "
+              << scope.cpu_proportion_ << std::endl;
+
+    for (const auto& child : scope.scope_outputs_)
+    {
+      print_subtree(child);
+    }
+  };
+
+  // Recursively print the output data.
+  std::cout << "ID: " << thread_output.thread_id_ << std::endl;
+  for (const auto& child : thread_output.scope_outputs_)
+  {
+    print_subtree(child);
+  }
 }
 
 void ThreadSamplingData::Update(
@@ -202,6 +214,28 @@ void ThreadSamplingData::TakeSample()
   }
 
   ++total_samples_;
+}
+
+std::uint64_t ThreadSamplingData::AccumulateStats(
+  ScopeOutput& parent) const
+{
+  for (ScopeOutput& child : parent.scope_outputs_)
+  {
+    parent.samples_ += AccumulateStats(child);
+  }
+
+  parent.cpu_proportion_ = double(parent.samples_) / total_samples_;
+
+  return parent.samples_;
+}
+
+void ThreadSamplingData::AccumulateStats(
+  ThreadOutput& output) const
+{
+  for (ScopeOutput& child : output.scope_outputs_)
+  {
+    AccumulateStats(child);
+  }
 }
 
 // This object updates the thread local data when it is constructed and
