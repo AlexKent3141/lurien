@@ -17,28 +17,6 @@
 namespace lurien
 {
 
-namespace details
-{
-  class ThreadSamplingData;
-
-  std::shared_ptr<ThreadSamplingData> CreateSamplingData();
-
-  // All variables which need to have external linkage are static members
-  // of this struct.
-  struct Ext
-  {
-    inline static std::atomic<bool> keep_sampling = true;
-    inline static std::unique_ptr<std::thread> sampling_worker;
-    inline static std::mutex sampler_sync;
-    inline static std::vector<std::weak_ptr<ThreadSamplingData>> samplers;
-    inline thread_local static std::shared_ptr<ThreadSamplingData> thread_data =
-      CreateSamplingData();
-  };
-
-  void TakeSamples();
-}
-
-/* Public interface */
 struct ScopeOutput;
 
 struct OutputNode
@@ -58,11 +36,76 @@ struct ThreadOutput : OutputNode
   std::thread::id thread_id_;
 };
 
+struct OutputReceiver
+{
+public:
+  virtual ~OutputReceiver() = default;
+  virtual void HandleOutput(const ThreadOutput&) const = 0;
+};
+
+// This is the default receiver implementation which writes to an std::ostream.
+class DefaultOutputReceiver : public OutputReceiver
+{
+public:
+  DefaultOutputReceiver(std::ostream& out) : out_(out) {}
+  void HandleOutput(const ThreadOutput& output) const;
+
+private:
+  std::ostream& out_;
+
+  void PrintSubtree(const ScopeOutput& scope) const;
+};
+
+void DefaultOutputReceiver::HandleOutput(const ThreadOutput& output) const
+{
+  // Recursively print the output data.
+  out_ << "ID: " << output.thread_id_ << std::endl;
+  for (const auto& child : output.scope_outputs_)
+  {
+    PrintSubtree(child);
+  }
+}
+
+void DefaultOutputReceiver::PrintSubtree(const ScopeOutput& scope) const
+{
+  out_ << scope.name_ << " "
+       << scope.cpu_proportion_ << std::endl;
+
+  for (const auto& child : scope.scope_outputs_)
+  {
+    PrintSubtree(child);
+  }
+}
+
+namespace details
+{
+  class ThreadSamplingData;
+
+  std::shared_ptr<ThreadSamplingData> CreateSamplingData();
+
+  // All variables which need to have external linkage are static members
+  // of this struct.
+  struct Ext
+  {
+    inline static std::atomic<bool> keep_sampling = true;
+    inline static std::unique_ptr<std::thread> sampling_worker;
+    inline static std::mutex sampler_sync;
+    inline static std::vector<std::weak_ptr<ThreadSamplingData>> samplers;
+    inline thread_local static std::shared_ptr<ThreadSamplingData> thread_data =
+      CreateSamplingData();
+  };
+
+  void TakeSamples();
+
+  std::unique_ptr<OutputReceiver> receiver;
+}
+
 // Kick off a thread which periodically samples all threads.
-void Init()
+void Init(std::unique_ptr<OutputReceiver> receiver)
 {
   if (!details::Ext::sampling_worker)
   {
+    details::receiver = std::move(receiver);
     details::Ext::sampling_worker = std::make_unique<std::thread>(
       &details::TakeSamples);
   }
@@ -147,24 +190,7 @@ ThreadSamplingData::~ThreadSamplingData()
     accumulate_stats(child);
   }
 
-  std::function<void(const ScopeOutput&)> print_subtree =
-    [&print_subtree] (const ScopeOutput& scope)
-  {
-    std::cout << scope.name_ << " "
-              << scope.cpu_proportion_ << std::endl;
-
-    for (const auto& child : scope.scope_outputs_)
-    {
-      print_subtree(child);
-    }
-  };
-
-  // Recursively print the output data.
-  std::cout << "ID: " << output_.thread_id_ << std::endl;
-  for (const auto& child : output_.scope_outputs_)
-  {
-    print_subtree(child);
-  }
+  receiver->HandleOutput(output_);
 }
 
 void ThreadSamplingData::Update(
