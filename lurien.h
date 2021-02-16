@@ -76,13 +76,6 @@ void Stop()
 namespace details
 {
 
-struct ScopeInfo
-{
-  std::string name_;
-  std::size_t parent_hash_;
-  std::uint64_t samples_;
-};
-
 class ThreadSamplingData :
   public std::enable_shared_from_this<ThreadSamplingData>
 {
@@ -96,8 +89,10 @@ private:
   std::size_t current_scope_hash_;
   std::uint64_t total_samples_;
   std::hash<std::string> hash_fn_;
-  std::unordered_map<std::size_t, ScopeInfo> scope_data_;
+  std::unordered_map<std::size_t, ScopeOutput*> scope_data_;
   std::mutex sample_sync_;
+  ScopeOutput* current_scope_ = nullptr;
+  ThreadOutput output_;
 
   std::uint64_t AccumulateStats(ScopeOutput&) const;
   void AccumulateStats(ThreadOutput&) const;
@@ -126,46 +121,11 @@ ThreadSamplingData::~ThreadSamplingData()
 {
   std::lock_guard<std::mutex> lk(sample_sync_);
 
-  ThreadOutput thread_output;
-  thread_output.thread_id_ = std::this_thread::get_id();
-
-  std::list<std::reference_wrapper<ScopeOutput>> leaves;
-
-  auto add_scopes_with_parent =
-    [this, &leaves] (
-      std::size_t parent_hash,
-      std::list<ScopeOutput>& child_scopes)
-  {
-    for (const auto& pair : scope_data_)
-    {
-      const ScopeInfo& scope_info = pair.second;
-      if (scope_info.parent_hash_ == parent_hash)
-      {
-        child_scopes.emplace_back(
-          ScopeOutput
-          {
-            scope_info.name_,
-            scope_info.samples_,
-            pair.first
-          });
-
-        leaves.push_back(child_scopes.back());
-      }
-    }
-  };
-
-  add_scopes_with_parent(0, thread_output.scope_outputs_);
-
-  while (!leaves.empty())
-  {
-    ScopeOutput& leaf = leaves.front();
-    leaves.pop_front();
-    add_scopes_with_parent(leaf.hash_, leaf.scope_outputs_);
-  }
+  output_.thread_id_ = std::this_thread::get_id();
 
   // Accumulate the probabilities so that an outer scope's usage is at
   // least the sum of its inner scope's usages.
-  AccumulateStats(thread_output);
+  AccumulateStats(output_);
 
   std::function<void(const ScopeOutput&)> print_subtree;
   print_subtree = [&print_subtree] (const ScopeOutput& scope)
@@ -180,8 +140,8 @@ ThreadSamplingData::~ThreadSamplingData()
   };
 
   // Recursively print the output data.
-  std::cout << "ID: " << thread_output.thread_id_ << std::endl;
-  for (const auto& child : thread_output.scope_outputs_)
+  std::cout << "ID: " << output_.thread_id_ << std::endl;
+  for (const auto& child : output_.scope_outputs_)
   {
     print_subtree(child);
   }
@@ -196,11 +156,20 @@ void ThreadSamplingData::Update(
   if (!scope_data_.contains(current_scope_hash_))
   {
     std::size_t parent_hash = current_scope_hash_ ^ hash_fn_(name);
-    scope_data_.insert(
+
+    if (parent_hash == 0)
     {
-      current_scope_hash_,
-      ScopeInfo { name, parent_hash, 0 }
-    });
+      output_.scope_outputs_.push_back( { name, 0, current_scope_hash_ });
+      current_scope_ = &output_.scope_outputs_.back();
+      scope_data_.insert( { current_scope_hash_, current_scope_ } );
+    }
+    else
+    {
+      auto parent = scope_data_[parent_hash];
+      parent->scope_outputs_.push_back( { name, 0, current_scope_hash_ });
+      current_scope_ = &parent->scope_outputs_.back();
+      scope_data_.insert( { current_scope_hash_, current_scope_ } );
+    }
   }
 }
 
@@ -209,8 +178,8 @@ void ThreadSamplingData::TakeSample()
   if (current_scope_hash_ != 0)
   {
     std::lock_guard<std::mutex> lk(sample_sync_);
-    auto& scope_info = scope_data_.at(current_scope_hash_);
-    ++scope_info.samples_;
+    auto& scope_output = scope_data_.at(current_scope_hash_);
+    ++scope_output->samples_;
   }
 
   ++total_samples_;
