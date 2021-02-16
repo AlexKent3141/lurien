@@ -38,19 +38,24 @@ namespace details
   void TakeSamples();
 }
 
-struct ScopeOutput
+/* Public interface */
+struct ScopeOutput;
+
+struct OutputNode
 {
-  std::string name_;
-  std::uint64_t samples_;
-  std::size_t hash_;
-  double cpu_proportion_;
   std::list<ScopeOutput> scope_outputs_;
 };
 
-struct ThreadOutput
+struct ScopeOutput : OutputNode
+{
+  std::string name_;
+  std::uint64_t samples_;
+  double cpu_proportion_;
+};
+
+struct ThreadOutput : OutputNode
 {
   std::thread::id thread_id_;
-  std::list<ScopeOutput> scope_outputs_;
 };
 
 // Kick off a thread which periodically samples all threads.
@@ -72,6 +77,8 @@ void Stop()
     details::Ext::sampling_worker->join();
   }
 }
+
+/* End public interface */
 
 namespace details
 {
@@ -157,19 +164,12 @@ void ThreadSamplingData::Update(
   {
     std::size_t parent_hash = current_scope_hash_ ^ hash_fn_(name);
 
-    if (parent_hash == 0)
-    {
-      output_.scope_outputs_.push_back( { name, 0, current_scope_hash_ });
-      current_scope_ = &output_.scope_outputs_.back();
-      scope_data_.insert( { current_scope_hash_, current_scope_ } );
-    }
-    else
-    {
-      auto parent = scope_data_[parent_hash];
-      parent->scope_outputs_.push_back( { name, 0, current_scope_hash_ });
-      current_scope_ = &parent->scope_outputs_.back();
-      scope_data_.insert( { current_scope_hash_, current_scope_ } );
-    }
+    OutputNode* parent = parent_hash == 0
+      ? &output_ : (OutputNode*)scope_data_[parent_hash];
+
+    parent->scope_outputs_.push_back( ScopeOutput { {}, name, 0 });
+    current_scope_ = &parent->scope_outputs_.back();
+    scope_data_.insert( { current_scope_hash_, current_scope_ } );
   }
 }
 
