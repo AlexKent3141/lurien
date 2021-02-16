@@ -100,9 +100,6 @@ private:
   std::mutex sample_sync_;
   ScopeOutput* current_scope_ = nullptr;
   ThreadOutput output_;
-
-  std::uint64_t AccumulateStats(ScopeOutput&) const;
-  void AccumulateStats(ThreadOutput&) const;
 };
 
 std::shared_ptr<ThreadSamplingData> CreateSamplingData()
@@ -132,10 +129,26 @@ ThreadSamplingData::~ThreadSamplingData()
 
   // Accumulate the probabilities so that an outer scope's usage is at
   // least the sum of its inner scope's usages.
-  AccumulateStats(output_);
+  std::function<std::uint64_t(ScopeOutput&)> accumulate_stats =
+    [this, &accumulate_stats] (ScopeOutput& parent)
+  {
+    for (ScopeOutput& child : parent.scope_outputs_)
+    {
+      parent.samples_ += accumulate_stats(child);
+    }
 
-  std::function<void(const ScopeOutput&)> print_subtree;
-  print_subtree = [&print_subtree] (const ScopeOutput& scope)
+    parent.cpu_proportion_ = double(parent.samples_) / total_samples_;
+
+    return parent.samples_;
+  };
+
+  for (ScopeOutput& child : output_.scope_outputs_)
+  {
+    accumulate_stats(child);
+  }
+
+  std::function<void(const ScopeOutput&)> print_subtree =
+    [&print_subtree] (const ScopeOutput& scope)
   {
     std::cout << scope.name_ << " "
               << scope.cpu_proportion_ << std::endl;
@@ -183,28 +196,6 @@ void ThreadSamplingData::TakeSample()
   }
 
   ++total_samples_;
-}
-
-std::uint64_t ThreadSamplingData::AccumulateStats(
-  ScopeOutput& parent) const
-{
-  for (ScopeOutput& child : parent.scope_outputs_)
-  {
-    parent.samples_ += AccumulateStats(child);
-  }
-
-  parent.cpu_proportion_ = double(parent.samples_) / total_samples_;
-
-  return parent.samples_;
-}
-
-void ThreadSamplingData::AccumulateStats(
-  ThreadOutput& output) const
-{
-  for (ScopeOutput& child : output.scope_outputs_)
-  {
-    AccumulateStats(child);
-  }
 }
 
 // This object updates the thread local data when it is constructed and
