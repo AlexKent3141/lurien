@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <iostream>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -11,8 +12,6 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
-
-#include <iostream>
 
 namespace lurien
 {
@@ -79,52 +78,23 @@ void DefaultOutputReceiver::PrintSubtree(const ScopeOutput& scope) const
 
 namespace details
 {
-  class ThreadSamplingData;
 
-  std::shared_ptr<ThreadSamplingData> CreateSamplingData();
+class ThreadSamplingData;
 
-  // All variables which need to have external linkage are static members
-  // of this struct.
-  struct Ext
-  {
-    inline static std::atomic<bool> keep_sampling = true;
-    inline static std::unique_ptr<std::thread> sampling_worker;
-    inline static std::mutex sampler_sync;
-    inline static std::vector<std::weak_ptr<ThreadSamplingData>> samplers;
-    inline thread_local static std::shared_ptr<ThreadSamplingData> thread_data =
-      CreateSamplingData();
-  };
+std::shared_ptr<ThreadSamplingData> CreateSamplingData();
 
-  void TakeSamples();
-
-  std::unique_ptr<OutputReceiver> receiver;
-}
-
-// Kick off a thread which periodically samples all threads.
-void Init(std::unique_ptr<OutputReceiver> receiver)
+// All variables which need to have external linkage are static members
+// of this struct.
+struct Ext
 {
-  if (!details::Ext::sampling_worker)
-  {
-    details::receiver = std::move(receiver);
-    details::Ext::sampling_worker = std::make_unique<std::thread>(
-      &details::TakeSamples);
-  }
-}
-
-// Stop sampling.
-void Stop()
-{
-  if (details::Ext::keep_sampling && details::Ext::sampling_worker)
-  {
-    details::Ext::keep_sampling = false;
-    details::Ext::sampling_worker->join();
-  }
-}
-
-/* End public interface */
-
-namespace details
-{
+  inline static std::atomic<bool> keep_sampling = true;
+  inline static std::unique_ptr<std::thread> sampling_worker;
+  inline static std::mutex sampler_sync;
+  inline static std::vector<std::weak_ptr<ThreadSamplingData>> samplers;
+  inline thread_local static std::shared_ptr<ThreadSamplingData> thread_data =
+    CreateSamplingData();
+  inline static std::unique_ptr<OutputReceiver> receiver;
+};
 
 class ThreadSamplingData :
   public std::enable_shared_from_this<ThreadSamplingData>
@@ -190,7 +160,7 @@ ThreadSamplingData::~ThreadSamplingData()
     accumulate_stats(child);
   }
 
-  receiver->HandleOutput(output_);
+  Ext::receiver->HandleOutput(output_);
 }
 
 void ThreadSamplingData::Update(
@@ -217,11 +187,47 @@ void ThreadSamplingData::TakeSample()
   if (current_scope_hash_ != 0)
   {
     std::lock_guard<std::mutex> lk(sample_sync_);
-    auto& scope_output = scope_data_.at(current_scope_hash_);
-    ++scope_output->samples_;
+    ++current_scope_->samples_;
   }
 
   ++total_samples_;
+}
+
+void TakeSamples()
+{
+  while (Ext::keep_sampling)
+  {
+    std::lock_guard<std::mutex> lk(Ext::sampler_sync);
+    for (auto& sampler : Ext::samplers)
+    {
+      auto shared_sampler = sampler.lock();
+      if (shared_sampler)
+      {
+        shared_sampler->TakeSample();
+      }
+    }
+  }
+}
+
+// Kick off a thread which periodically samples all threads.
+void Init(std::unique_ptr<OutputReceiver> receiver)
+{
+  if (!Ext::sampling_worker)
+  {
+    Ext::receiver = std::move(receiver);
+    Ext::sampling_worker = std::make_unique<std::thread>(
+      &details::TakeSamples);
+  }
+}
+
+// Stop sampling.
+void Stop()
+{
+  if (Ext::keep_sampling && Ext::sampling_worker)
+  {
+    Ext::keep_sampling = false;
+    Ext::sampling_worker->join();
+  }
 }
 
 // This object updates the thread local data when it is constructed and
@@ -229,6 +235,7 @@ void ThreadSamplingData::TakeSample()
 class Scope
 {
 public:
+  Scope() = delete;
   Scope(const std::string& name);
   ~Scope();
 
@@ -249,23 +256,16 @@ Scope::~Scope()
   Ext::thread_data->Update(name_);
 }
 
-void TakeSamples()
-{
-  while (Ext::keep_sampling)
-  {
-    std::lock_guard<std::mutex> lk(Ext::sampler_sync);
-    for (auto& sampler : Ext::samplers)
-    {
-      auto shared_sampler = sampler.lock();
-      if (shared_sampler)
-      {
-        shared_sampler->TakeSample();
-      }
-    }
-  }
-}
-
 } // details
 } // lurien
+
+#define LURIEN_INIT(receiver) \
+  lurien::details::Init(receiver);
+
+#define LURIEN_STOP \
+  lurien::details::Stop();
+
+#define LURIEN_SCOPE(name) \
+  lurien::details::Scope scope_##name(#name);
 
 #endif // __LURIEN_PROFILER_H__
