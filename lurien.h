@@ -169,7 +169,12 @@ void ThreadSamplingData::Update(
   std::lock_guard<std::mutex> lk(sample_sync_);
 
   current_scope_hash_ ^= hash_fn_(name);
-  if (!scope_data_.contains(current_scope_hash_))
+
+  if (current_scope_hash_ == 0)
+  {
+    current_scope_ = nullptr;
+  }
+  else if (!scope_data_.contains(current_scope_hash_))
   {
     std::size_t parent_hash = current_scope_hash_ ^ hash_fn_(name);
 
@@ -184,10 +189,12 @@ void ThreadSamplingData::Update(
 
 void ThreadSamplingData::TakeSample()
 {
-  if (current_scope_hash_ != 0)
   {
     std::lock_guard<std::mutex> lk(sample_sync_);
-    ++current_scope_->samples_;
+    if (current_scope_ != nullptr)
+    {
+      ++current_scope_->samples_;
+    }
   }
 
   ++total_samples_;
@@ -236,11 +243,13 @@ class Scope
 {
 public:
   Scope() = delete;
+  Scope(const Scope&) = delete;
+  Scope(Scope&&) = delete;
   Scope(const std::string& name);
   ~Scope();
 
 private:
-  const std::string& name_;
+  std::string name_;
 };
 
 Scope::Scope(
