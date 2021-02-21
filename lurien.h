@@ -47,15 +47,15 @@ class DefaultOutputReceiver : public OutputReceiver
 {
 public:
   DefaultOutputReceiver(std::ostream& out) : out_(out) {}
-  void HandleOutput(const ThreadOutput& output) const;
+  inline void HandleOutput(const ThreadOutput& output) const;
 
 private:
   std::ostream& out_;
 
-  void PrintSubtree(const ScopeOutput& scope) const;
+  inline void PrintSubtree(const ScopeOutput& scope) const;
 };
 
-void DefaultOutputReceiver::HandleOutput(const ThreadOutput& output) const
+inline void DefaultOutputReceiver::HandleOutput(const ThreadOutput& output) const
 {
   // Recursively print the output data.
   out_ << "ID: " << output.thread_id_ << std::endl;
@@ -65,7 +65,7 @@ void DefaultOutputReceiver::HandleOutput(const ThreadOutput& output) const
   }
 }
 
-void DefaultOutputReceiver::PrintSubtree(const ScopeOutput& scope) const
+inline void DefaultOutputReceiver::PrintSubtree(const ScopeOutput& scope) const
 {
   out_ << scope.name_ << " "
        << scope.cpu_proportion_ << std::endl;
@@ -81,7 +81,7 @@ namespace details
 
 class ThreadSamplingData;
 
-std::shared_ptr<ThreadSamplingData> CreateSamplingData();
+inline std::shared_ptr<ThreadSamplingData> CreateSamplingData();
 
 // All variables which need to have external linkage are static members
 // of this struct.
@@ -100,10 +100,10 @@ class ThreadSamplingData :
   public std::enable_shared_from_this<ThreadSamplingData>
 {
 public:
-  ThreadSamplingData();
-  ~ThreadSamplingData();
-  void Update(const std::string& name);
-  void TakeSample();
+  inline ThreadSamplingData();
+  inline ~ThreadSamplingData();
+  inline void Update(const std::string& name);
+  inline void TakeSample();
   
 private:
   std::size_t current_scope_hash_;
@@ -115,7 +115,7 @@ private:
   ThreadOutput output_;
 };
 
-std::shared_ptr<ThreadSamplingData> CreateSamplingData()
+inline std::shared_ptr<ThreadSamplingData> CreateSamplingData()
 {
   auto sampler = std::make_shared<ThreadSamplingData>();
   {
@@ -126,7 +126,7 @@ std::shared_ptr<ThreadSamplingData> CreateSamplingData()
   return sampler;
 }
 
-ThreadSamplingData::ThreadSamplingData()
+inline ThreadSamplingData::ThreadSamplingData()
 :
   current_scope_hash_(0),
   total_samples_(0)
@@ -134,7 +134,7 @@ ThreadSamplingData::ThreadSamplingData()
 }
 
 // This is where the data this thread has accumulated will be output.
-ThreadSamplingData::~ThreadSamplingData()
+inline ThreadSamplingData::~ThreadSamplingData()
 {
   std::lock_guard<std::mutex> lk(sample_sync_);
 
@@ -163,7 +163,7 @@ ThreadSamplingData::~ThreadSamplingData()
   Ext::receiver->HandleOutput(output_);
 }
 
-void ThreadSamplingData::Update(
+inline void ThreadSamplingData::Update(
   const std::string& name)
 {
   std::lock_guard<std::mutex> lk(sample_sync_);
@@ -187,7 +187,7 @@ void ThreadSamplingData::Update(
   }
 }
 
-void ThreadSamplingData::TakeSample()
+inline void ThreadSamplingData::TakeSample()
 {
   {
     std::lock_guard<std::mutex> lk(sample_sync_);
@@ -200,7 +200,7 @@ void ThreadSamplingData::TakeSample()
   ++total_samples_;
 }
 
-void TakeSamples()
+inline void TakeSamples()
 {
   while (Ext::keep_sampling)
   {
@@ -217,7 +217,7 @@ void TakeSamples()
 }
 
 // Kick off a thread which periodically samples all threads.
-void Init(std::unique_ptr<OutputReceiver> receiver)
+inline void Init(std::unique_ptr<OutputReceiver> receiver)
 {
   if (!Ext::sampling_worker)
   {
@@ -228,7 +228,7 @@ void Init(std::unique_ptr<OutputReceiver> receiver)
 }
 
 // Stop sampling.
-void Stop()
+inline void Stop()
 {
   if (Ext::keep_sampling && Ext::sampling_worker)
   {
@@ -242,17 +242,14 @@ void Stop()
 class Scope
 {
 public:
-  Scope() = delete;
-  Scope(const Scope&) = delete;
-  Scope(Scope&&) = delete;
-  Scope(const std::string& name);
-  ~Scope();
+  inline Scope(const std::string& name);
+  inline ~Scope();
 
 private:
   std::string name_;
 };
 
-Scope::Scope(
+inline Scope::Scope(
   const std::string& name)
 :
   name_(name)
@@ -260,7 +257,7 @@ Scope::Scope(
   Ext::thread_data->Update(name);
 }
 
-Scope::~Scope()
+inline Scope::~Scope()
 {
   Ext::thread_data->Update(name_);
 }
