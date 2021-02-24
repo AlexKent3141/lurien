@@ -185,6 +185,10 @@ inline void ThreadSamplingData::Update(
     current_scope_ = &parent->scope_outputs_.back();
     scope_data_.insert( { current_scope_hash_, current_scope_ } );
   }
+  else
+  {
+    current_scope_ = scope_data_[current_scope_hash_];
+  }
 }
 
 inline void ThreadSamplingData::TakeSample()
