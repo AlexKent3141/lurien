@@ -4,10 +4,10 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
-#include <iostream>
 #include <list>
 #include <memory>
 #include <mutex>
+#include <ostream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -39,7 +39,8 @@ struct OutputReceiver
 {
 public:
   virtual ~OutputReceiver() = default;
-  virtual void HandleOutput(const ThreadOutput&) const = 0;
+  virtual void HandleOutput(
+    const ThreadOutput&) const = 0;
 };
 
 // This is the default receiver implementation which writes to an std::ostream.
@@ -47,32 +48,45 @@ class DefaultOutputReceiver : public OutputReceiver
 {
 public:
   DefaultOutputReceiver(std::ostream& out) : out_(out) {}
-  inline void HandleOutput(const ThreadOutput& output) const;
+  inline void HandleOutput(
+    const ThreadOutput& output) const;
 
 private:
   std::ostream& out_;
+  mutable std::mutex output_sync_;
 
-  inline void PrintSubtree(const ScopeOutput& scope) const;
+  inline void PrintSubtree(
+    const ScopeOutput& scope,
+    int depth) const;
 };
 
-inline void DefaultOutputReceiver::HandleOutput(const ThreadOutput& output) const
+inline void DefaultOutputReceiver::HandleOutput(
+  const ThreadOutput& output) const
 {
+  std::lock_guard<std::mutex> lk(output_sync_);
+
+  out_ << std::hex << std::showbase;
+  out_ << "Thread ID: " << output.thread_id_ << std::endl;
+  out_ << std::dec << std::noshowbase;
+
   // Recursively print the output data.
-  out_ << "ID: " << output.thread_id_ << std::endl;
   for (const auto& child : output.scope_outputs_)
   {
-    PrintSubtree(child);
+    PrintSubtree(child, 0);
   }
 }
 
-inline void DefaultOutputReceiver::PrintSubtree(const ScopeOutput& scope) const
+inline void DefaultOutputReceiver::PrintSubtree(
+  const ScopeOutput& scope,
+  int depth) const
 {
-  out_ << scope.name_ << " "
+  out_ << std::string(2*depth, ' ')
+       << scope.name_ << " "
        << scope.cpu_proportion_ << std::endl;
 
   for (const auto& child : scope.scope_outputs_)
   {
-    PrintSubtree(child);
+    PrintSubtree(child, depth + 1);
   }
 }
 
@@ -193,12 +207,10 @@ inline void ThreadSamplingData::Update(
 
 inline void ThreadSamplingData::TakeSample()
 {
+  std::lock_guard<std::mutex> lk(sample_sync_);
+  if (current_scope_ != nullptr)
   {
-    std::lock_guard<std::mutex> lk(sample_sync_);
-    if (current_scope_ != nullptr)
-    {
-      ++current_scope_->samples_;
-    }
+    ++current_scope_->samples_;
   }
 
   ++total_samples_;
