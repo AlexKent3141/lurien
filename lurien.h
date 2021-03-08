@@ -13,6 +13,16 @@
 #include <unordered_map>
 #include <vector>
 
+#ifndef LURIEN_ENABLED
+#define LURIEN_ENABLED 1
+#endif
+
+#if LURIEN_ENABLED == 0
+#define LURIEN_INIT(receiver)
+#define LURIEN_STOP
+#define LURIEN_SCOPE(name)
+#endif
+
 namespace lurien
 {
 
@@ -89,6 +99,8 @@ inline void DefaultOutputReceiver::PrintSubtree(
     PrintSubtree(child, depth + 1);
   }
 }
+
+#if LURIEN_ENABLED != 0
 
 namespace details
 {
@@ -195,7 +207,7 @@ inline void ThreadSamplingData::Update(
     OutputNode* parent = parent_hash == 0
       ? &output_ : (OutputNode*)scope_data_[parent_hash];
 
-    parent->scope_outputs_.push_back( ScopeOutput { {}, name, 0 });
+    parent->scope_outputs_.push_back( ScopeOutput { {}, name, 0, 0 });
     current_scope_ = &parent->scope_outputs_.back();
     scope_data_.insert( { current_scope_hash_, current_scope_ } );
   }
@@ -279,7 +291,6 @@ inline Scope::~Scope()
 }
 
 } // details
-} // lurien
 
 #define LURIEN_INIT(receiver) \
   lurien::details::Init(receiver);
@@ -289,5 +300,9 @@ inline Scope::~Scope()
 
 #define LURIEN_SCOPE(name) \
   lurien::details::Scope scope_##name(#name);
+
+#endif
+
+} // lurien
 
 #endif // __LURIEN_PROFILER_H__
