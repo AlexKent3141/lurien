@@ -6,10 +6,12 @@ add_library(lurien
 
 target_include_directories(lurien
   INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR})
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 find_package(Threads REQUIRED)
 
 target_link_libraries(lurien
   INTERFACE
     Threads::Threads)
+
+add_subdirectory(examples)

@@ -1,4 +1,4 @@
-#include "lurien.h"
+#include "lurien/lurien.h"
 #include <chrono>
 #include <thread>
 #include <iostream>
