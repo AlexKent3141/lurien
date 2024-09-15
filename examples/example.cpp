@@ -1,8 +1,10 @@
-#include "lurien/lurien.h"
 #include <chrono>
 #include <thread>
 #include <iostream>
 #include <memory>
+
+#define LURIEN_ENABLED
+#include "lurien/lurien.h"
 
 const int TARGET = 1e8;
 

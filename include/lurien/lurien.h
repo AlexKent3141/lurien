@@ -13,16 +13,6 @@
 #include <unordered_map>
 #include <vector>
 
-#ifndef LURIEN_ENABLED
-#define LURIEN_ENABLED 1
-#endif
-
-#if LURIEN_ENABLED == 0
-#define LURIEN_INIT(receiver)
-#define LURIEN_STOP
-#define LURIEN_SCOPE(name)
-#endif
-
 namespace lurien
 {
 
@@ -99,8 +89,6 @@ inline void DefaultOutputReceiver::PrintSubtree(
     PrintSubtree(child, depth + 1);
   }
 }
-
-#if LURIEN_ENABLED != 0
 
 namespace details
 {
@@ -291,6 +279,13 @@ inline Scope::~Scope()
 }
 
 } // details
+
+#if not defined(LURIEN_ENABLED)
+#define LURIEN_INIT(receiver)
+#define LURIEN_STOP
+#define LURIEN_SCOPE(name)
+
+#else
 
 #define LURIEN_INIT(receiver) \
   lurien::details::Init(receiver);
